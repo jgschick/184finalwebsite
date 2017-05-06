@@ -1,0 +1,67 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head>
+<style>  
+    div.padded {  
+      padding-top: 0px;  
+      padding-right: 100px;  
+      padding-bottom: 0.25in;  
+      padding-left: 100px;  
+    }  
+  </style> 
+<title>Your Name  |  CS 184</title>
+<meta http-equiv="content-type" content="text/html; charset=utf-8" />
+<link rel="stylesheet" type="text/css" href="style.css" media="screen" />
+</head>
+<body>
+<br />
+<h1 align="middle">Final Project: Melting Simulation</h1>
+    <h2 align="middle">J Schick, Shun Hu</h2>
+
+    <div class="padded">
+
+    <h2 align="middle">Abstract</h2>
+        <p>The goal of this project was to produce an augmented material point method (MPM)-based simulation of materials. This physically-based method can accurately simulate the behavior of solids and liquids with varying (and mixed) shear and bulk moduli and other physical constants. It also handles phase transition between solid and liquid states by storing the latent heat of fusion of a particle and how much energy it has at any point during a phase transition. The overall structure of the simulation method is to, at each time step, rasterize particles to a Eularian marker and cell (MAC) grid, apply differential state changes to the nodes of that grid, and then use a combination of FLIP and particle in cell (PIC) methods to update the particle states according to the grid.</p>
+
+    <h2 align="middle">Technical approach</h2>
+        <p>We started out with starter code for particle-based fluid simulation that rendered a set of particles based on their position and volume at each time step. The application used glm vectors, but we also used the Eigen library for matrix calculations. Our goal was to follow the implementation described in [Stomakhin et al. 2014] as closely as possible, though we did not bother defining or rendering non-particle objects. We also did not bother to optimize the performance of our implementation (with dynamic MAC grids or reduced iteration loops).</p>
+        <p>From there, we updated the particle set class and particle struct to include the physical constants and information we needed in our simulation (such as Lam&#233; constants, melting point, temperature, latent heat of fusion, deformation gradients (plastic and elastic), mass, phase, heat capacity, heat conductivity, and elasticity constraints. We then defined a MAC grid class and associated three one-dimensional face-centered force/velocity MAC grids and one cell-centered pressure grid with the particle set. The a grid was defined as a base point and a cell height (face grids were offset by h/2) and a set of nodes with fields for position (constant, as the grids are Eularian), velocity, extrapolated change in position, temperature, mass, total force, heat capacity, and booleans definig the state of the cell as "internal", "empty", or "colliding" (empty and colliding boxes are subject to boundary conditions)</p>
+        <p>We then began the work of calculating the change in the system over a timestep. First, we updated the plasticity and elasticity of the particles with information from the last timestep, clamping the elastic part of the deformation gradient (using singular variable decomposition) if it exceeded the constraints (this corresponds to a fracture in the material). We also normalized the plastic part of the deformation gradient to get rid of hydrostatic (expansion) stress.</p>
+        <p>The next step was to compute the interpolation weights of each partcle and each grid node. These weights are used to rasterize particle data onto the grids, and are given by the formula outlined in equation 19 in [Stomakhin et al. 2014]. After computing the weights, they are used to rasterize data from particles to the grid; velocity and thermal conductivity components were rasterized onto the one-dimensional face grids, while the determinants of the deformation gradients, heat capacity, and Lam&#233;'s parameter &lambda; were rasterized to the center grid.</p>
+        <p>Once particle data had been rasterized to the grids, each cell was classified as "colliding" based on whether it was in contact with a collision object (only a hard-coded bounding box, in our case), "empty", or "interior" if it had received mass from any particle. This data would be used later to enforce boundary conditions of temperature and pressure.</p>
+        <p>The fifth step was to update the velocity components of the grid faces. These intermediate velocities were estimated using the predicted movement of the face (if it were not Eularian and fixed in place) to calculate the deviatoric potential energy based on the deformation gradients and volumes of the rasterized particles (equations and solutions detailed in [Stomakhin et al. 2014]). From this, the forces at each point could be calculated, and from those, the velocities of the grid system could be semi-implicitly updated.</p>
+        <p>After velocities were updated, colliding faces had their velocity components corrected by setting them to the velocity of the colliding object (0, in the case of our bounding box). This produces "sticking collisions", where the material sticks to the surface of the colliding object.</p>
+        <p>The next step was to use discretized pressure projections to correct the grid velocities. This was done by solving for the pressure using a center-differenced gradient stencil, then using the pressure and the density to get the final velocities. Boundary conditions were applied to empty and colliding cells, and the control volume (used to calculate density) was carefully defined to correct artifacts  from collision objects.</p>
+        <p>The eighth step was to solve the heat equations with a Poisson solve and another gradient operator. Boundary conditions were places again on empty cells, colliding cells, and (if implemented) insulated objects.</p>
+        <p>Once the grid state had been updated, it was time to update particle state from the grid. This was done using a combination of FLIP and PIC methods (which produces more realistic results than only using one method, as seen in [Stomakhin et al. 2015]. First, particle velocities were updated, and then deformation gradients (using a truncated exponential method to correct for potential errors). For fluid particles, the deviatoric component of the gradient was removed. Particle temperatures were then updated; if a predicted temperature crossed the melting point, the change in energy was instead added to the heat buffer until the heat buffer was either empty, in which case the particle became solid, or full (to the latent heat of the particle), in which case the particle became liquid.</p>
+        <p>Finally, we processed particle collisions by setting collided particles' velocity to the colliding object's velocity at that point. After this, particle positions were advanced by v*&Delta;t. <br><br></p>
+        <p>We encountered many problems during this project, and some of them we were unable to overcome, resulting in an incomplete and nonfunctional simulator. Our first challenge was figuring out how to render the system; at Lingqi's suggestion, we initially attempted to generate XML files to be rendered with mitsuba. Eventually, after realizing that we would not be able to render fluid surfaces with this simulation alone, we found the OpenGL renderer of the starter code (as linked on Piazza). We also had to abort the initial iteration of our project after we struggled to run the code on our (Mac and Winows) computers, and instead transferred over to the instructional machines a few weeks in and started again from scratch. At this point we also abandoned the file input/output functions we had been trying to implement for more interesting starting conditions.</p>
+        <p>The main challenge we faced was interpreting and solving the calculations presented in the paper; while many of them were within our abilities or solved in the paper's technical supplement, we were unable to figure out how to interpret or solve any of the equations for grid velocity and pressure updating; despite spending more than 24 hours consulting both the paper and Google trying to understand it, we couldn't understand how to form the "Q matrix" to find intermediate velocities. We were alo confused by weveral parameters mentioned but never clearly defined in the paper, such as "s_c", and we couldn't figure out how to find the gradient operator G_ic. Thus, we were able to render particles to the grid and back, but our simulation failed to update grid parameters.</p>
+        <p>Nonetheless, we learned a lot about material simulation and differential equations involving vectors and matrices by attempting this project. We did learn how MPM material simulation worked, even though the equations governing grid changes were beyone our mathematical ability. We also gained experience creating/compiling/running programs in C++ (and including libraries) without pre-prepared structures.</p>
+
+    <h2 align="middle">Results</h2>
+        <p>
+        <center><img src="s1.png" width="600px"/><br></center>
+        Our simulation was not successful in updating movement or positions or tempersature, so the only thing we could render were the starting conditions. However, the step() code was constantly running in the background without producing any exceptions, even though we couldn't test it beyond that.</p>
+
+    <h2 align="middle">References</h2>
+        <p><a href="http://alexey.stomakhin.com/research/siggraph2014_melt.pdf">[Stomakhin et al. 2014]</a><a href="http://alexey.stomakhin.com/research/siggraph2014_tech_report.pdf">[Technical Supplement]</a> <br>
+        <<a href="http://alexey.stomakhin.com/research/siggraph2015_apic.pdf">[Stomakhin et al. 2015]</a><br>
+        <a href="http://alexey.stomakhin.com/research/siggraph2013_snow.pdf">[Stomakhin et al. 2013]</a> <a href="http://alexey.stomakhin.com/research/siggraph2013_tech_report.pdf">[Technical Supplement]</a><br>
+        <a href="http://www.cs.utexas.edu/users/inderjit/public_papers/HLA_SVD.pdf">SVD solving methods (Cline and Dhillon)</a><br>
+        <a href="https://cg.informatik.uni-freiburg.de/intern/seminar/gridFluids_fluid_flow_for_the_rest_of_us.pdf">"Fluid Flow for the Rest of Us"</a><br>
+        <a href="http://plaza.ufl.edu/ebrackear/">MAC Method</a><br>
+        <a href="deformationgradient">Deformation gradient explained</a> <br>
+        ...and many, many Wikipedia articles and old lecture slides and handouts from various university websites.
+        </p>
+
+    <h2 align="middle">Contributions from each team member</h2>
+        <p>Shun Hu: FLIP and PIC particle updating methods and proofreading of other methods. Also set up original project attempt.</p>
+        <p>J Schick: All code in submission other than Particle::render() and main.cpp (starter code), FLIP/PIC particle update (Shun), and included libraries (obviously). Also wrote this report, the final presentation, and submitted files.</p>
+</div>
+</body>
+</html>
+
+
+
+
